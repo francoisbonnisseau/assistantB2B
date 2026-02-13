@@ -65,3 +65,18 @@ values ('UUID_DE_L_ADMIN');
 - Confirmation de suppression hard delete
 - CRUD types de meeting globaux
 - Association prompts par client et par type de meeting
+
+## Edge Functions pour l'extension
+
+Fonctions deployees:
+
+- `client-login`
+- `client-config`
+
+Secrets requis dans Supabase Edge Functions:
+
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `CLIENT_JWT_SECRET`
+
+`CLIENT_JWT_SECRET` doit etre une cle longue et aleatoire (min 32 caracteres).

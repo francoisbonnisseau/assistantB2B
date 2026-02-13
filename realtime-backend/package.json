@@ -1,0 +1,16 @@
+{
+  "name": "realtime-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "@deepgram/sdk": "^4.11.3",
+    "dotenv": "^16.4.7",
+    "groq-sdk": "^0.9.1",
+    "ws": "^8.18.0"
+  }
+}
