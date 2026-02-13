@@ -1,0 +1,58 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,500;9..144,600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 36 40% 98%;
+    --foreground: 214 35% 14%;
+    --card: 0 0% 100%;
+    --card-foreground: 214 35% 14%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 214 35% 14%;
+    --primary: 186 75% 27%;
+    --primary-foreground: 43 100% 97%;
+    --secondary: 33 56% 93%;
+    --secondary-foreground: 214 35% 20%;
+    --muted: 35 35% 94%;
+    --muted-foreground: 214 12% 40%;
+    --accent: 33 56% 93%;
+    --accent-foreground: 214 35% 20%;
+    --destructive: 0 80% 48%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 31 30% 86%;
+    --input: 30 32% 88%;
+    --ring: 186 75% 35%;
+    --chart-1: 21 88% 56%;
+    --chart-2: 186 75% 34%;
+    --chart-3: 214 35% 26%;
+    --chart-4: 44 95% 61%;
+    --chart-5: 168 68% 36%;
+    --radius: 0.8rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    margin: 0;
+    min-width: 320px;
+    min-height: 100vh;
+    @apply bg-background text-foreground;
+    font-family: 'Manrope', sans-serif;
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: 'Fraunces', serif;
+    letter-spacing: -0.02em;
+  }
+
+  #root {
+    min-height: 100vh;
+  }
+}
