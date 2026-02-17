@@ -7,9 +7,6 @@ const state = {
   description: '',
   accessToken: '',
   ws: null,
-  captureWindowId: null,
-  captureWindowReady: false,
-  pendingCapturePayload: null,
   contentState: {
     status: 'idle',
     suggestions: [],
@@ -181,9 +178,12 @@ function connectWebsocket() {
 
     socket.addEventListener('message', (event) => {
       const parsed = JSON.parse(event.data)
+
       if (parsed.type === 'TRANSCRIPT_UPDATE') {
         log('Transcript', parsed.payload)
+        // Forward transcript to both offscreen (for logging) and side panel
         sendRuntimeMessage({ type: 'OFFSCREEN_TRANSCRIPT', payload: parsed.payload })
+        sendRuntimeMessage({ type: 'SIDEPANEL_TRANSCRIPT_UPDATE', payload: parsed.payload })
         return
       }
 
@@ -196,12 +196,15 @@ function connectWebsocket() {
       })
 
       updateContentState(parsed.payload)
+      // Forward insights to side panel
+      sendRuntimeMessage({ type: 'SIDEPANEL_INSIGHT_UPDATE', payload: parsed.payload })
     })
 
     socket.addEventListener('close', () => {
       log('WS closed')
       state.status = 'idle'
       updateContentState({ status: 'idle' })
+      sendRuntimeMessage({ type: 'SIDEPANEL_COACHING_STOPPED' })
     })
 
     socket.addEventListener('error', (event) => {
@@ -237,80 +240,6 @@ function updateContentState(patch) {
 }
 
 // ============================================================
-// Tab capture window management
-// ============================================================
-
-async function openCaptureWindow(streamId, tabId) {
-  // Close existing capture window if any
-  await closeCaptureWindow()
-
-  state.captureWindowReady = false
-  state.pendingCapturePayload = { streamId, tabId }
-
-  const captureUrl = chrome.runtime.getURL('capture.html')
-  log('Opening tab capture window', captureUrl)
-
-  return new Promise((resolve) => {
-    chrome.windows.create(
-      {
-        url: captureUrl,
-        type: 'popup',
-        width: 1,
-        height: 1,
-        left: -100,
-        top: -100,
-        focused: false,
-      },
-      (win) => {
-        if (chrome.runtime.lastError) {
-          logError('Failed to create capture window', chrome.runtime.lastError.message)
-          resolve(false)
-          return
-        }
-        state.captureWindowId = win.id
-        log('Capture window created', { windowId: win.id })
-
-        // Minimize after creation
-        chrome.windows.update(win.id, { state: 'minimized' }, () => {
-          if (chrome.runtime.lastError) {
-            logWarn('Could not minimize capture window', chrome.runtime.lastError.message)
-          }
-        })
-
-        resolve(true)
-      },
-    )
-  })
-}
-
-async function closeCaptureWindow() {
-  if (state.captureWindowId) {
-    try {
-      // Tell capture window to stop first
-      await sendRuntimeMessage({ type: 'TAB_CAPTURE_STOP' })
-    } catch {}
-
-    try {
-      await chrome.windows.remove(state.captureWindowId)
-    } catch {}
-
-    state.captureWindowId = null
-    state.captureWindowReady = false
-    state.pendingCapturePayload = null
-  }
-}
-
-// Watch for capture window being closed by user
-chrome.windows.onRemoved.addListener((windowId) => {
-  if (windowId === state.captureWindowId) {
-    log('Capture window was closed')
-    state.captureWindowId = null
-    state.captureWindowReady = false
-    state.pendingCapturePayload = null
-  }
-})
-
-// ============================================================
 // Coaching lifecycle
 // ============================================================
 
@@ -344,20 +273,13 @@ async function startCoaching(payload) {
   // 1) Connect WS and wait for it to be open
   await connectWebsocket()
 
-  // 2) Get tab stream ID
-  const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id })
-  log('Got tab stream id')
-
-  // 3) Open capture popup window for tab audio
-  log('Opening capture window for tab audio')
-  await openCaptureWindow(streamId, tab.id)
-
-  // 4) Start mic capture in offscreen document
+  // 2) Start mic capture in offscreen document
   await ensureOffscreenDocument()
   log('Starting mic capture in offscreen')
   await sendRuntimeMessage({ type: 'OFFSCREEN_START_MIC' })
 
-  log('Coaching started (tab=capture window, mic=offscreen)')
+  // Tab capture is handled directly by the side panel via chrome.tabCapture.capture()
+  log('Coaching started (tab=side panel, mic=offscreen)')
 }
 
 function stopCoaching() {
@@ -366,8 +288,8 @@ function stopCoaching() {
   // Stop mic in offscreen
   sendRuntimeMessage({ type: 'OFFSCREEN_STOP_MIC' })
 
-  // Close tab capture window
-  closeCaptureWindow()
+  // Tell side panel to stop tab capture
+  sendRuntimeMessage({ type: 'SIDEPANEL_COACHING_STOPPED' })
 
   // Close WebSocket
   if (state.ws && state.ws.readyState <= 1) {
@@ -410,8 +332,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true
   }
 
-  // Tab audio chunks from capture window → forward to backend WS
-  if (message.type === 'TAB_AUDIO_CHUNK') {
+  // Tab audio chunks from side panel -> forward to backend WS
+  if (message.type === 'SIDEPANEL_TAB_AUDIO_CHUNK') {
     if (state.ws && state.ws.readyState === 1) {
       state.ws.send(
         JSON.stringify({
@@ -424,7 +346,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true
   }
 
-  // Mic audio chunks from offscreen → forward to backend WS
+  // Mic audio chunks from offscreen -> forward to backend WS
   if (message.type === 'OFFSCREEN_AUDIO_CHUNK') {
     if (state.ws && state.ws.readyState === 1) {
       state.ws.send(
@@ -434,31 +356,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }),
       )
     }
-    respond({ ok: true })
-    return true
-  }
-
-  // Capture window is ready — send the streamId to start tab capture
-  if (message.type === 'TAB_CAPTURE_WINDOW_READY') {
-    log('Capture window reports ready')
-    state.captureWindowReady = true
-
-    if (state.pendingCapturePayload) {
-      log('Sending TAB_CAPTURE_START to capture window')
-      sendRuntimeMessage({
-        type: 'TAB_CAPTURE_START',
-        payload: state.pendingCapturePayload,
-      })
-      state.pendingCapturePayload = null
-    }
-
-    respond({ ok: true })
-    return true
-  }
-
-  // Capture window state updates
-  if (message.type === 'TAB_CAPTURE_STATE') {
-    log('Tab capture state', message.payload)
     respond({ ok: true })
     return true
   }
@@ -476,7 +373,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false
 })
 
+// ============================================================
+// Extension lifecycle
+// ============================================================
+
 chrome.runtime.onInstalled.addListener(() => {
+  // Enable side panel
+  if (chrome.sidePanel?.setOptions) {
+    chrome.sidePanel.setOptions({ enabled: true }).catch((e) => {
+      logWarn('Failed to enable side panel', e)
+    })
+  }
+
+  // Open microphone permission page on install
   chrome.tabs.create({
     url: chrome.runtime.getURL(MICROPHONE_PERMISSION_PAGE),
     active: true,

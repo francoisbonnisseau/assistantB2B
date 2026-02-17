@@ -13,11 +13,14 @@ export default {
     default_popup: 'index.html',
     default_title: 'B2B Coach',
   },
+  side_panel: {
+    default_path: 'sidepanel.html',
+  },
   background: {
     service_worker: 'src/background.js',
     type: 'module',
   },
-  permissions: ['storage', 'tabs', 'tabCapture', 'offscreen', 'activeTab', 'scripting', 'audioCapture'],
+  permissions: ['storage', 'tabs', 'tabCapture', 'offscreen', 'activeTab', 'scripting', 'sidePanel'],
   host_permissions: [...WHITELIST_MATCHES, 'https://*.supabase.co/*'],
   content_scripts: [
     {
@@ -28,7 +31,7 @@ export default {
   ],
   web_accessible_resources: [
     {
-      resources: ['offscreen.html', 'capture.html', 'capture.js'],
+      resources: ['offscreen.html'],
       matches: ['<all_urls>'],
     },
   ],
