@@ -7,11 +7,8 @@ export function validateUsername(value) {
 }
 
 export function validateClientPassword(value, { required = true } = {}) {
-  if (!value && !required) return null
-  if (!value || value.length < 10) return 'Le mot de passe doit contenir au moins 10 caracteres.'
-  if (!/[A-Z]/.test(value)) return 'Le mot de passe doit contenir au moins une majuscule.'
-  if (!/[a-z]/.test(value)) return 'Le mot de passe doit contenir au moins une minuscule.'
-  if (!/[0-9]/.test(value)) return 'Le mot de passe doit contenir au moins un chiffre.'
+  if (!required && !value) return null
+  if (!value) return 'Le mot de passe est obligatoire.'
   return null
 }
 
