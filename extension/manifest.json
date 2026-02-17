@@ -11,11 +11,14 @@
     "service_worker": "src/background.js",
     "type": "module"
   },
-  "permissions": ["storage", "tabs", "tabCapture", "offscreen", "activeTab"],
+  "permissions": ["storage", "tabs", "tabCapture", "offscreen", "activeTab", "scripting", "audioCapture"],
   "host_permissions": [
     "https://meet.google.com/*",
     "https://*.zoom.us/*",
     "https://teams.microsoft.com/*",
+    "https://youtube.com/*",
+    "https://www.youtube.com/*",
+    "https://m.youtube.com/*",
     "https://*.supabase.co/*"
   ],
   "content_scripts": [
@@ -23,7 +26,10 @@
       "matches": [
         "https://meet.google.com/*",
         "https://*.zoom.us/*",
-        "https://teams.microsoft.com/*"
+        "https://teams.microsoft.com/*",
+        "https://youtube.com/*",
+        "https://www.youtube.com/*",
+        "https://m.youtube.com/*"
       ],
       "js": ["src/content.jsx"],
       "run_at": "document_idle"

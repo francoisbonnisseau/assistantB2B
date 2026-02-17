@@ -85,31 +85,36 @@ function App() {
   const startCoaching = () => {
     if (!session?.accessToken || !selectedMeetingType) return
 
-    chrome.runtime.sendMessage(
-      {
-        type: 'START_COACHING',
-        payload: {
-          accessToken: session.accessToken,
-          meetingType: {
-            id: selectedMeetingType.id,
-            code: selectedMeetingType.code,
-            label: selectedMeetingType.label,
-            prompt: selectedMeetingType.prompt,
+    chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
+      const tab = tabs?.[0]
+      chrome.runtime.sendMessage(
+        {
+          type: 'START_COACHING',
+          payload: {
+            accessToken: session.accessToken,
+            tabId: tab?.id,
+            tabUrl: tab?.url,
+            meetingType: {
+              id: selectedMeetingType.id,
+              code: selectedMeetingType.code,
+              label: selectedMeetingType.label,
+              prompt: selectedMeetingType.prompt,
+            },
+            description: config?.description ?? '',
           },
-          description: config?.description ?? '',
         },
-      },
-      (response) => {
-        if (response?.ok) {
-          setRuntimeState(response.state)
-          return
-        }
+        (response) => {
+          if (response?.ok) {
+            setRuntimeState(response.state)
+            return
+          }
 
-        if (response?.error) {
-          setError(response.error)
-        }
-      },
-    )
+          if (response?.error) {
+            setError(response.error)
+          }
+        },
+      )
+    })
   }
 
   const stopCoaching = () => {
@@ -118,6 +123,10 @@ function App() {
         setRuntimeState(response.state)
       }
     })
+  }
+
+  const openMicrophonePermissionPage = () => {
+    chrome.tabs.create({ url: chrome.runtime.getURL('microphone-permission.html') })
   }
 
   if (loading) {
@@ -178,6 +187,9 @@ function App() {
             Stop
           </button>
         </div>
+        <button type="button" className="secondary" onClick={openMicrophonePermissionPage}>
+          Autoriser micro
+        </button>
         <button type="button" className="link" onClick={handleLogout}>
           Se deconnecter
         </button>

@@ -23,10 +23,17 @@ function OverlayApp() {
   const [collapsed, setCollapsed] = useState(false)
 
   useEffect(() => {
-    const handler = (message) => {
+    const handler = (message, _sender, sendResponse) => {
+      if (message?.type === 'B2B_COACH_PING') {
+        sendResponse({ ok: true })
+        return true
+      }
+
       if (message?.type === 'COACHING_STATE') {
         setState((prev) => ({ ...prev, ...message.payload }))
       }
+
+      return false
     }
 
     chrome.runtime.onMessage.addListener(handler)

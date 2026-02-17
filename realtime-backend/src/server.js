@@ -30,7 +30,8 @@ server.on('connection', (socket) => {
       session.meetingType = message.payload?.meetingType ?? null
       session.description = message.payload?.description ?? ''
       session.prompt = message.payload?.meetingType?.prompt ?? ''
-      session.deepgramSockets = initDeepgramSockets(session, socket)
+      const requestedSources = message.payload?.sources
+      session.deepgramSockets = initDeepgramSockets(session, socket, requestedSources)
       return
     }
 
@@ -43,6 +44,19 @@ server.on('connection', (socket) => {
       const dgSocket = session.deepgramSockets[source]
       if (dgSocket?.getReadyState?.() === 1) {
         dgSocket.send(buffer)
+      }
+      if (session.audioStats[source]) {
+        session.audioStats[source].chunks += 1
+        session.audioStats[source].bytes += buffer.length
+        session.audioStats[source].lastReadyState = dgSocket?.getReadyState?.()
+
+        const now = Date.now()
+        if (now - session.audioStats[source].lastLogAt > 5000) {
+          session.audioStats[source].lastLogAt = now
+          console.log(
+            `[backend] audio stats (${source}) chunks=${session.audioStats[source].chunks} bytes=${session.audioStats[source].bytes} dg=${session.audioStats[source].lastReadyState}`,
+          )
+        }
       }
       return
     }
@@ -59,6 +73,10 @@ function createSession() {
     prompt: '',
     description: '',
     deepgramSockets: { mic: null, tab: null },
+    audioStats: {
+      mic: { chunks: 0, bytes: 0, lastLogAt: 0, lastReadyState: null },
+      tab: { chunks: 0, bytes: 0, lastLogAt: 0, lastReadyState: null },
+    },
     transcript: [],
     tokenCounter: { sellerWords: 0, buyerWords: 0 },
     lastSummaryAt: 0,
@@ -66,16 +84,24 @@ function createSession() {
   }
 }
 
-function initDeepgramSockets(session, socket) {
+function initDeepgramSockets(session, socket, sources) {
   if (!deepgram) {
     console.warn('[backend] DEEPGRAM_API_KEY missing, using heuristic mode only')
     return { mic: null, tab: null }
   }
 
-  return {
-    mic: createDeepgramLiveSocket('mic', session, socket),
-    tab: createDeepgramLiveSocket('tab', session, socket),
+  const enabledSources = Array.isArray(sources) && sources.length ? sources : ['mic', 'tab']
+  const sockets = { mic: null, tab: null }
+
+  if (enabledSources.includes('mic')) {
+    sockets.mic = createDeepgramLiveSocket('mic', session, socket)
   }
+
+  if (enabledSources.includes('tab')) {
+    sockets.tab = createDeepgramLiveSocket('tab', session, socket)
+  }
+
+  return sockets
 }
 
 function createDeepgramLiveSocket(source, session, extensionSocket) {
@@ -85,9 +111,9 @@ function createDeepgramLiveSocket(source, session, extensionSocket) {
     smart_format: true,
     punctuate: true,
     interim_results: true,
-    encoding: 'opus',
     channels: 1,
-    sample_rate: 48000,
+    encoding: 'linear16',
+    sample_rate: 16000,
   })
 
   live.on(LiveTranscriptionEvents.Open, () => {
@@ -98,6 +124,10 @@ function createDeepgramLiveSocket(source, session, extensionSocket) {
     const transcript = event.channel?.alternatives?.[0]?.transcript?.trim()
     if (!transcript) return
 
+    console.log(
+      `[backend] transcript (${source}) ${event.is_final ? 'final' : 'partial'}: ${transcript}`,
+    )
+
     const role = source === 'mic' ? 'seller' : 'buyer'
     session.transcript.push({
       role,
@@ -105,6 +135,17 @@ function createDeepgramLiveSocket(source, session, extensionSocket) {
       isFinal: Boolean(event.is_final),
       ts: Date.now(),
     })
+
+    extensionSocket.send(
+      JSON.stringify({
+        type: 'TRANSCRIPT_UPDATE',
+        payload: {
+          source,
+          text: transcript,
+          isFinal: Boolean(event.is_final),
+        },
+      }),
+    )
 
     const wordCount = transcript.split(/\s+/).filter(Boolean).length
     if (role === 'seller') session.tokenCounter.sellerWords += wordCount

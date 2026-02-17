@@ -6,6 +6,9 @@ export const ALLOWED_HOST_PATTERNS = [
   'meet.google.com',
   '.zoom.us',
   'teams.microsoft.com',
+  'youtube.com',
+  'www.youtube.com',
+  'm.youtube.com',
 ]
 
 export function isAllowedMeetingUrl(url = '') {
