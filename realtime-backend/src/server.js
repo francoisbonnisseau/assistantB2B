@@ -8,6 +8,9 @@ const DEEPGRAM_API_KEY = process.env.DEEPGRAM_API_KEY
 const GROQ_API_KEY = process.env.GROQ_API_KEY
 const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile'
 
+// How often (ms) the LLM analysis runs
+const LLM_COOLDOWN_MS = 10_000
+
 const groq = GROQ_API_KEY ? new Groq({ apiKey: GROQ_API_KEY }) : null
 const deepgram = DEEPGRAM_API_KEY ? createDeepgramClient(DEEPGRAM_API_KEY) : null
 
@@ -77,16 +80,16 @@ function createSession() {
       mic: { chunks: 0, bytes: 0, lastLogAt: 0, lastReadyState: null },
       tab: { chunks: 0, bytes: 0, lastLogAt: 0, lastReadyState: null },
     },
-    transcript: [],
+    transcript: [],       // all utterances: { role, text, isFinal, ts }
     tokenCounter: { sellerWords: 0, buyerWords: 0 },
-    lastSummaryAt: 0,
     lastAnalysisAt: 0,
+    lastInsights: null,   // cache last LLM result so we can push it while cooling down
   }
 }
 
 function initDeepgramSockets(session, socket, sources) {
   if (!deepgram) {
-    console.warn('[backend] DEEPGRAM_API_KEY missing, using heuristic mode only')
+    console.warn('[backend] DEEPGRAM_API_KEY missing, skipping transcription')
     return { mic: null, tab: null }
   }
 
@@ -96,7 +99,6 @@ function initDeepgramSockets(session, socket, sources) {
   if (enabledSources.includes('mic')) {
     sockets.mic = createDeepgramLiveSocket('mic', session, socket)
   }
-
   if (enabledSources.includes('tab')) {
     sockets.tab = createDeepgramLiveSocket('tab', session, socket)
   }
@@ -139,11 +141,7 @@ function createDeepgramLiveSocket(source, session, extensionSocket) {
     extensionSocket.send(
       JSON.stringify({
         type: 'TRANSCRIPT_UPDATE',
-        payload: {
-          source,
-          text: transcript,
-          isFinal: Boolean(event.is_final),
-        },
+        payload: { source, text: transcript, isFinal: Boolean(event.is_final) },
       }),
     )
 
@@ -165,36 +163,38 @@ function createDeepgramLiveSocket(source, session, extensionSocket) {
   return live
 }
 
+// ============================================================
+// Insights pipeline
+// ============================================================
+
 async function pushInsights(session, extensionSocket) {
   const now = Date.now()
-  const ratio = computeTalkRatio(session.tokenCounter)
-  const heuristics = heuristicInsights(session)
+  const talkRatio = computeTalkRatio(session.tokenCounter)
 
-  let llmInsights = null
-  if (groq && now - session.lastAnalysisAt > 5000) {
+  // Always update talk ratio immediately
+  // Only run LLM analysis when cooldown has passed AND there is transcript to analyse
+  let insights = session.lastInsights
+  if (groq && now - session.lastAnalysisAt >= LLM_COOLDOWN_MS) {
     session.lastAnalysisAt = now
-    llmInsights = await generateGroqInsights(session).catch(() => null)
-  }
-
-  const summaryLines =
-    now - session.lastSummaryAt > 60000
-      ? createMinuteSummary(session)
-      : session.cachedSummary ?? ['Resume en cours de construction...']
-  if (now - session.lastSummaryAt > 60000) {
-    session.lastSummaryAt = now
-    session.cachedSummary = summaryLines
+    const fresh = await generateGroqInsights(session).catch((err) => {
+      console.error('[backend] groq error', err?.message)
+      return null
+    })
+    if (fresh) {
+      session.lastInsights = fresh
+      insights = fresh
+    }
   }
 
   const payload = {
     status: 'running',
-    talkRatio: ratio,
-    suggestions: llmInsights?.suggestions ?? heuristics.suggestions,
-    objections: llmInsights?.objections ?? heuristics.objections,
-    battleCards: llmInsights?.battleCards ?? heuristics.battleCards,
-    frameworkScores: llmInsights?.frameworkScores ?? heuristics.frameworkScores,
-    missingSignals: llmInsights?.missingSignals ?? heuristics.missingSignals,
-    nextStepAlerts: llmInsights?.nextStepAlerts ?? heuristics.nextStepAlerts,
-    summaryLines,
+    talkRatio,
+    suggestions:     insights?.suggestions     ?? [],
+    objections:      insights?.objections      ?? [],
+    battleCards:     insights?.battleCards     ?? [],
+    frameworkScores: insights?.frameworkScores ?? { meddic: 0, bant: 0, spiced: 0 },
+    missingSignals:  insights?.missingSignals  ?? [],
+    nextStepAlerts:  insights?.nextStepAlerts  ?? [],
   }
 
   extensionSocket.send(JSON.stringify({ type: 'INSIGHT_UPDATE', payload }))
@@ -203,107 +203,122 @@ async function pushInsights(session, extensionSocket) {
 function computeTalkRatio(counter) {
   const total = counter.sellerWords + counter.buyerWords
   if (!total) return { seller: 0, buyer: 0 }
-
   const seller = Math.round((counter.sellerWords / total) * 100)
   return { seller, buyer: 100 - seller }
 }
 
-function heuristicInsights(session) {
-  const merged = session.transcript.slice(-40).map((item) => item.text.toLowerCase()).join(' ')
-  const objections = []
-  const battleCards = []
-  const suggestions = []
+// ============================================================
+// Groq LLM analysis — full transcript, structured JSON output
+// ============================================================
 
-  if (/(trop cher|cher|prix)/.test(merged)) {
-    objections.push('Objection prix detectee -> recadrer sur ROI et impact business.')
-    suggestions.push('Question: Quel cout de non-resolution avez-vous aujourd\'hui ?')
+/**
+ * Build the full transcript string, keeping the most recent utterances
+ * if the transcript grows very long (token budget ~6000 words).
+ */
+function buildTranscriptText(session) {
+  // Keep all final utterances; trim to last 200 utterances if very long
+  const utterances = session.transcript
+    .filter((u) => u.isFinal)
+    .slice(-200)
+
+  if (!utterances.length) {
+    // Fall back to partials if nothing is final yet
+    return session.transcript.slice(-30).map((u) => `${u.role}: ${u.text}`).join('\n')
   }
 
-  if (/(deja un outil|outil actuel|solution actuelle)/.test(merged)) {
-    objections.push('Objection outil existant -> creuser les limites de la solution actuelle.')
-  }
-
-  if (/(salesforce|hubspot|pipedrive|gong|clari)/.test(merged)) {
-    battleCards.push('Concurrent mentionne -> demander les gaps perçus avant de comparer les features.')
-  }
-
-  const frameworkScores = {
-    meddic: scoreKeyword(merged, ['budget', 'decideur', 'timeline', 'metric']),
-    bant: scoreKeyword(merged, ['budget', 'autorite', 'besoin', 'timeline']),
-    spiced: scoreKeyword(merged, ['situation', 'pain', 'impact', 'critical event', 'decision']),
-  }
-
-  const missingSignals = []
-  if (!/decideur|decisionnaire/.test(merged)) missingSignals.push('Decideur final non identifie.')
-  if (!/budget/.test(merged)) missingSignals.push('Budget non qualifie.')
-
-  const nextStepAlerts = []
-  if (!/prochaine etape|next step|rendez-vous|date/.test(merged) && callDurationMinutes(session) > 15) {
-    nextStepAlerts.push('Tu n\'as pas verrouille de next step concret.')
-  }
-
-  if (!suggestions.length) {
-    suggestions.push('Pose une question de qualification pour faire avancer le cycle.')
-  }
-
-  return { suggestions, objections, battleCards, frameworkScores, missingSignals, nextStepAlerts }
-}
-
-function scoreKeyword(text, keywords) {
-  const hits = keywords.filter((keyword) => text.includes(keyword)).length
-  return Math.round((hits / keywords.length) * 100)
-}
-
-function callDurationMinutes(session) {
-  if (!session.startedAt) return 0
-  return (Date.now() - session.startedAt) / 60000
-}
-
-function createMinuteSummary(session) {
-  const lines = []
-  const recent = session.transcript.slice(-20)
-
-  for (const item of recent) {
-    lines.push(`${item.role === 'seller' ? 'Vendeur' : 'Prospect'}: ${item.text}`)
-    if (lines.length >= 20) break
-  }
-
-  return lines.length ? lines : ['Pas assez de contenu pour un resume pour l\'instant.']
+  return utterances.map((u) => `${u.role}: ${u.text}`).join('\n')
 }
 
 async function generateGroqInsights(session) {
-  const recentTranscript = session.transcript.slice(-30).map((item) => `${item.role}: ${item.text}`).join('\n')
-  if (!recentTranscript) return null
+  const transcriptText = buildTranscriptText(session)
+  if (!transcriptText) return null
+
+  const durationMin = callDurationMinutes(session)
+  const sellerRatio = computeTalkRatio(session.tokenCounter).seller
+
+  const systemPrompt = `Tu es un coach sales B2B expert qui assiste un commercial en temps réel pendant un appel.
+Tu analyses le transcript complet et retournes UNIQUEMENT du JSON valide (aucun texte hors du JSON).
+
+Structure JSON attendue :
+{
+  "suggestions": [
+    { "title": "...", "keyPoints": ["...", "..."] }
+  ],
+  "objections": [
+    { "title": "Objection détectée", "keyPoints": ["Réponse suggérée 1", "Réponse suggérée 2"] }
+  ],
+  "battleCards": [
+    { "title": "Concurrent mentionné", "keyPoints": ["Argument différenciant 1", "Question piège à poser"] }
+  ],
+  "frameworkScores": {
+    "meddic": 0,
+    "bant": 0,
+    "spiced": 0
+  },
+  "missingSignals": ["..."],
+  "nextStepAlerts": ["..."]
+}
+
+Règles :
+- suggestions : 1 à 3 actions concrètes que le commercial devrait faire maintenant (question à poser, point à valider, argument à avancer). Vide si le call se passe bien.
+- objections : liste les objections détectées avec 2-3 réponses/frameworks adaptés. Vide si aucune objection.
+- battleCards : uniquement si un concurrent est explicitement mentionné. Arguments différenciants + questions pièges. Vide sinon.
+- frameworkScores : score 0-100 pour chaque framework basé sur les infos collectées dans le transcript (budget, décideur, timeline, métriques, situation, pain, impact, next step...).
+- missingSignals : critères critiques non encore abordés selon le stade du call. Vide si tout a été couvert.
+- nextStepAlerts : alerte si le call dure plus de ${Math.round(durationMin)} minutes et qu'aucun next step concret n'a été verrouillé. Vide sinon.
+- Toutes les réponses en français.
+- Sois précis et actionnable. Pas de généralités.`
+
+  const userMessage = `Contexte client : ${session.description || 'Non fourni'}
+Type de meeting : ${session.meetingType?.label || 'Non spécifié'}
+Instructions spécifiques : ${session.prompt || 'Aucune'}
+Durée du call : ${durationMin.toFixed(1)} minutes
+Ratio vendeur/prospect : ${sellerRatio}% / ${100 - sellerRatio}%
+
+Transcript complet :
+${transcriptText}`
 
   const completion = await groq.chat.completions.create({
     model: GROQ_MODEL,
     temperature: 0.2,
+    max_tokens: 1024,
     response_format: { type: 'json_object' },
     messages: [
-      {
-        role: 'system',
-        content:
-          'Tu es un coach sales B2B en temps reel. Retourne uniquement du JSON valide avec les cles: suggestions, objections, battleCards, frameworkScores, missingSignals, nextStepAlerts.',
-      },
-      {
-        role: 'user',
-        content: `Prompt client:\n${session.prompt}\n\nDescription client:\n${session.description}\n\nType meeting:\n${session.meetingType?.label || ''}\n\nTranscript:\n${recentTranscript}`,
-      },
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userMessage },
     ],
   })
 
   const content = completion.choices?.[0]?.message?.content
   if (!content) return null
 
-  const parsed = JSON.parse(content)
-  return {
-    suggestions: parsed.suggestions || [],
-    objections: parsed.objections || [],
-    battleCards: parsed.battleCards || [],
-    frameworkScores: parsed.frameworkScores || { meddic: 0, bant: 0, spiced: 0 },
-    missingSignals: parsed.missingSignals || [],
-    nextStepAlerts: parsed.nextStepAlerts || [],
+  let parsed
+  try {
+    parsed = JSON.parse(content)
+  } catch (e) {
+    console.error('[backend] groq JSON parse error', e?.message, content?.slice(0, 200))
+    return null
   }
+
+  return {
+    suggestions:     Array.isArray(parsed.suggestions)     ? parsed.suggestions     : [],
+    objections:      Array.isArray(parsed.objections)      ? parsed.objections      : [],
+    battleCards:     Array.isArray(parsed.battleCards)     ? parsed.battleCards     : [],
+    frameworkScores: parsed.frameworkScores && typeof parsed.frameworkScores === 'object'
+      ? {
+          meddic: Number(parsed.frameworkScores.meddic ?? 0),
+          bant:   Number(parsed.frameworkScores.bant   ?? 0),
+          spiced: Number(parsed.frameworkScores.spiced ?? 0),
+        }
+      : { meddic: 0, bant: 0, spiced: 0 },
+    missingSignals:  Array.isArray(parsed.missingSignals)  ? parsed.missingSignals  : [],
+    nextStepAlerts:  Array.isArray(parsed.nextStepAlerts)  ? parsed.nextStepAlerts  : [],
+  }
+}
+
+function callDurationMinutes(session) {
+  if (!session.startedAt) return 0
+  return (Date.now() - session.startedAt) / 60000
 }
 
 function cleanupSession(session) {

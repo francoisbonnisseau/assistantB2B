@@ -1,26 +1,52 @@
 import React, { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { SuggestionBox } from './components/SuggestionBox'
-import { Checklist } from './components/Checklist'
-import { TimerAlert } from './components/TimerAlert'
 
 const ROOT_ID = 'b2b-coach-overlay-root'
 
-const INITIAL_STATE = {
-  status: 'idle',
-  suggestions: [],
-  objections: [],
-  battleCards: [],
-  frameworkScores: { meddic: 0, bant: 0, spiced: 0 },
-  missingSignals: [],
-  talkRatio: { seller: 0, buyer: 0 },
-  nextStepAlerts: [],
-  summaryLines: [],
+const INLINE_CSS = `
+  *{box-sizing:border-box;margin:0;padding:0;}
+  .overlay{
+    position:fixed;top:12px;right:12px;z-index:2147483647;
+    font-family:Inter,system-ui,sans-serif;font-size:12px;
+    display:flex;flex-direction:column;gap:6px;
+    pointer-events:none;
+  }
+  .chip{
+    pointer-events:auto;
+    background:rgba(15,23,42,0.92);
+    color:#f8fafc;
+    border-radius:10px;
+    padding:8px 12px;
+    max-width:280px;
+    line-height:1.4;
+    box-shadow:0 4px 16px rgba(0,0,0,0.4);
+    border:1px solid rgba(255,255,255,0.08);
+    display:flex;align-items:flex-start;gap:8px;
+  }
+  .chip.suggestion{border-left:3px solid #14b8a6;}
+  .chip.objection{border-left:3px solid #f59e0b;}
+  .dot{flex-shrink:0;width:6px;height:6px;border-radius:50%;margin-top:4px;}
+  .dot.s{background:#14b8a6;}
+  .dot.o{background:#f59e0b;}
+  .text{flex:1;word-break:break-word;}
+`
+
+function getItemText(item) {
+  if (!item) return ''
+  if (typeof item === 'string') return item
+  if (typeof item === 'object') {
+    const title = item.title || item.label || item.message || ''
+    const details = item.keyPoints || item.points || item.details || item.description || ''
+    const detailText = Array.isArray(details) ? details[0] || '' : String(details || '')
+    return title ? (detailText ? `${title} — ${detailText}` : title) : detailText || JSON.stringify(item)
+  }
+  return String(item)
 }
 
 function OverlayApp() {
-  const [state, setState] = useState(INITIAL_STATE)
-  const [collapsed, setCollapsed] = useState(false)
+  const [suggestion, setSuggestion] = useState(null)
+  const [objection, setObjection] = useState(null)
+  const [status, setStatus] = useState('idle')
 
   useEffect(() => {
     const handler = (message, _sender, sendResponse) => {
@@ -28,45 +54,50 @@ function OverlayApp() {
         sendResponse({ ok: true })
         return true
       }
-
       if (message?.type === 'COACHING_STATE') {
-        setState((prev) => ({ ...prev, ...message.payload }))
+        const p = message.payload
+        if (p.status !== undefined) setStatus(p.status)
+        if (p.suggestions !== undefined) setSuggestion(p.suggestions?.[0] ?? null)
+        if (p.objections !== undefined) setObjection(p.objections?.[0] ?? null)
       }
-
       return false
     }
 
     chrome.runtime.onMessage.addListener(handler)
     chrome.runtime.sendMessage({ type: 'REQUEST_CONTENT_STATE' }, (response) => {
-      if (response?.ok) {
-        setState((prev) => ({ ...prev, ...response.payload }))
+      if (response?.ok && response.payload) {
+        const p = response.payload
+        if (p.status !== undefined) setStatus(p.status)
+        if (p.suggestions !== undefined) setSuggestion(p.suggestions?.[0] ?? null)
+        if (p.objections !== undefined) setObjection(p.objections?.[0] ?? null)
       }
     })
 
     return () => chrome.runtime.onMessage.removeListener(handler)
   }, [])
 
-  return (
-    <div className={`b2b-overlay ${collapsed ? 'collapsed' : ''}`}>
-      <button className="toggle" type="button" onClick={() => setCollapsed((value) => !value)}>
-        {collapsed ? 'Coach' : 'Masquer'}
-      </button>
+  // Only show chips when coaching is running and there's something to show
+  if (status !== 'running') return null
 
-      {!collapsed ? (
-        <>
-          <header>
-            <h2>B2B Coach</h2>
-            <span className={`status ${state.status}`}>{state.status}</span>
-          </header>
-          <TimerAlert talkRatio={state.talkRatio} nextStepAlerts={state.nextStepAlerts} summaryLines={state.summaryLines} />
-          <SuggestionBox
-            suggestions={state.suggestions}
-            objections={state.objections}
-            battleCards={state.battleCards}
-          />
-          <Checklist frameworkScores={state.frameworkScores} missingSignals={state.missingSignals} />
-        </>
-      ) : null}
+  const suggestionText = getItemText(suggestion)
+  const objectionText = getItemText(objection)
+
+  if (!suggestionText && !objectionText) return null
+
+  return (
+    <div className="overlay">
+      {suggestionText && (
+        <div className="chip suggestion">
+          <span className="dot s" />
+          <span className="text">{suggestionText}</span>
+        </div>
+      )}
+      {objectionText && (
+        <div className="chip objection">
+          <span className="dot o" />
+          <span className="text">{objectionText}</span>
+        </div>
+      )}
     </div>
   )
 }
@@ -79,25 +110,9 @@ function injectOverlay() {
   document.body.appendChild(container)
 
   const shadow = container.attachShadow({ mode: 'open' })
+
   const style = document.createElement('style')
-  style.textContent = `
-    .b2b-overlay {position: fixed; top: 12px; right: 12px; width: 360px; max-height: calc(100vh - 24px); overflow:auto; z-index: 2147483647; background: #0f172a; color: #f8fafc; border-radius: 12px; padding: 12px; box-shadow: 0 20px 40px rgba(15, 23, 42, 0.45); font-family: Inter, system-ui, sans-serif;}
-    .b2b-overlay.collapsed {width: auto; padding: 8px;}
-    .b2b-overlay header {display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;}
-    .b2b-overlay h2 {margin:0; font-size: 14px;}
-    .b2b-overlay .status {font-size: 11px; padding: 2px 8px; border-radius: 999px; background:#334155;}
-    .b2b-overlay .status.running {background:#0f766e;}
-    .b2b-overlay .status.error {background:#b91c1c;}
-    .b2b-overlay .toggle {width:100%; margin-bottom:8px; background:#1e293b; border:1px solid #475569; color:#e2e8f0; border-radius:8px; padding:8px; cursor:pointer;}
-    .overlay-card {background: #1e293b; border:1px solid #334155; border-radius:10px; padding:10px; margin-bottom:10px;}
-    .overlay-card h3,.overlay-card h4 {margin:0 0 8px 0; font-size: 12px;}
-    .overlay-card ul {margin:0; padding-left: 16px; font-size:11px;}
-    .overlay-card li {margin-bottom:4px;}
-    .score-row {margin-bottom:8px;}
-    .score-label {display:flex; justify-content:space-between; font-size:11px; margin-bottom:4px;}
-    .score-track {height:6px; background:#334155; border-radius:999px; overflow:hidden;}
-    .score-fill {height:100%; background: linear-gradient(90deg, #14b8a6, #22d3ee);}
-  `
+  style.textContent = INLINE_CSS
 
   const mount = document.createElement('div')
   shadow.append(style, mount)

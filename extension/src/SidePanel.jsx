@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { loginClient, fetchClientConfig } from './services/edgeApi'
 import { getStoredSession, saveSession, clearSession } from './services/storage'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Progress } from '@/components/ui/progress'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { Separator } from '@/components/ui/separator'
 
 const LOG_PREFIX = '[B2B SidePanel]'
 const log = (...args) => console.log(LOG_PREFIX, ...args)
@@ -133,7 +139,7 @@ export default function SidePanel() {
     chrome.tabCapture.capture({ audio: true, video: false }, (stream) => {
       if (!stream) {
         logError('tabCapture.capture() returned null stream')
-        setError('Impossible de capturer l\'audio de l\'onglet. Verifie que l\'onglet est actif.')
+        setError("Impossible de capturer l'audio de l'onglet. Verifie que l'onglet est actif.")
         return
       }
 
@@ -247,7 +253,6 @@ export default function SidePanel() {
     setTranscripts([])
     setInsights(null)
 
-    // Tell background to connect WS + start mic capture in offscreen
     chrome.runtime.sendMessage(
       {
         type: 'START_COACHING',
@@ -265,7 +270,6 @@ export default function SidePanel() {
       (response) => {
         if (response?.ok) {
           setCoachingStatus('running')
-          // Start tab capture directly in side panel
           startTabCapture()
         } else {
           setError(response?.error || 'Erreur au demarrage')
@@ -286,170 +290,281 @@ export default function SidePanel() {
   // ============================================================
 
   if (loading) {
-    return <Shell>Chargement...</Shell>
+    return (
+      <Shell>
+        <p className="text-sm text-muted-foreground px-4 py-6 text-center">Chargement...</p>
+      </Shell>
+    )
   }
 
   if (!session || !config) {
     return (
       <Shell>
-        <h2 className="section-title">Connexion</h2>
-        <form className="panel form" onSubmit={handleLogin}>
-          <label>
-            Username
-            <input
-              value={credentials.username}
-              onChange={(e) => setCredentials((p) => ({ ...p, username: e.target.value }))}
-              required
-            />
-          </label>
-          <label>
-            Password
-            <input
-              type="password"
-              value={credentials.password}
-              onChange={(e) => setCredentials((p) => ({ ...p, password: e.target.value }))}
-              required
-            />
-          </label>
-          {error && <p className="error">{error}</p>}
-          <button type="submit" disabled={submitting}>
-            {submitting ? 'Connexion...' : 'Se connecter'}
-          </button>
-        </form>
+        <Card className="mx-3 mt-3">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Connexion</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <form className="flex flex-col gap-3" onSubmit={handleLogin}>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-muted-foreground">Username</label>
+                <input
+                  className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  value={credentials.username}
+                  onChange={(e) => setCredentials((p) => ({ ...p, username: e.target.value }))}
+                  required
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-muted-foreground">Password</label>
+                <input
+                  type="password"
+                  className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  value={credentials.password}
+                  onChange={(e) => setCredentials((p) => ({ ...p, password: e.target.value }))}
+                  required
+                />
+              </div>
+              {error && <p className="text-xs text-destructive">{error}</p>}
+              <Button type="submit" disabled={submitting} className="w-full">
+                {submitting ? 'Connexion...' : 'Se connecter'}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
       </Shell>
     )
   }
 
+  const isRunning = coachingStatus === 'running'
+
   return (
     <Shell>
       {/* Session header */}
-      <div className="session-header">
-        <span className="client-name">{config.clientName || config.username}</span>
-        <button type="button" className="link" onClick={handleLogout}>Deconnexion</button>
+      <div className="flex items-center justify-between px-4 py-2 border-b border-border">
+        <span className="text-sm font-medium truncate">{config.clientName || config.username}</span>
+        <Button variant="ghost" size="sm" onClick={handleLogout} className="text-xs h-7 px-2">
+          Deconnexion
+        </Button>
       </div>
 
-      {/* Controls */}
-      <div className="panel stack">
-        <label>
-          Type de meeting
-          <select value={selectedMeetingTypeId} onChange={(e) => setSelectedMeetingTypeId(e.target.value)}>
-            {config.meetingTypes.map((item) => (
-              <option key={item.id} value={item.id}>{item.label}</option>
-            ))}
-          </select>
-        </label>
+      <div className="flex flex-col gap-3 p-3">
+        {/* Controls card */}
+        <Card>
+          <CardContent className="pt-4 flex flex-col gap-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-muted-foreground">Type de meeting</label>
+              <select
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                value={selectedMeetingTypeId}
+                onChange={(e) => setSelectedMeetingTypeId(e.target.value)}
+              >
+                {config.meetingTypes.map((item) => (
+                  <option key={item.id} value={item.id}>{item.label}</option>
+                ))}
+              </select>
+            </div>
 
-        <div className="status-line">
-          <span className={`status-dot ${coachingStatus}`} />
-          <span>{coachingStatus === 'running' ? 'En cours' : coachingStatus === 'error' ? 'Erreur' : 'Pret'}</span>
-        </div>
+            <div className="flex items-center gap-2">
+              <span
+                className={`inline-block h-2 w-2 rounded-full flex-shrink-0 ${
+                  isRunning ? 'bg-primary' : coachingStatus === 'error' ? 'bg-destructive' : 'bg-muted-foreground'
+                }`}
+              />
+              <span className="text-xs text-muted-foreground">
+                {isRunning ? 'En cours' : coachingStatus === 'error' ? 'Erreur' : 'Pret'}
+              </span>
+            </div>
 
-        {error && <p className="error">{error}</p>}
+            {error && <p className="text-xs text-destructive">{error}</p>}
 
-        <div className="actions">
-          <button type="button" onClick={startCoaching} disabled={coachingStatus === 'running'}>
-            Demarrer
-          </button>
-          <button type="button" className="secondary" onClick={stopCoaching} disabled={coachingStatus !== 'running'}>
-            Stop
-          </button>
-        </div>
+            <div className="flex gap-2">
+              <Button onClick={startCoaching} disabled={isRunning} className="flex-1">
+                Demarrer
+              </Button>
+              <Button variant="outline" onClick={stopCoaching} disabled={!isRunning} className="flex-1">
+                Stop
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Coaching insights — only shown when running */}
+        {isRunning && (
+          <>
+            {/* Talk ratio */}
+            {insights?.talkRatio && (
+              <Card>
+                <CardHeader className="pb-2 pt-3">
+                  <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                    Talk ratio
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="pb-3">
+                  <div className="flex flex-col gap-1">
+                    <div className="flex justify-between text-xs mb-1">
+                      <span>Vendeur</span>
+                      <span>{insights.talkRatio.seller}%</span>
+                    </div>
+                    <Progress value={insights.talkRatio.seller} className="h-2" />
+                    <div className="flex justify-between text-xs mt-2 mb-1">
+                      <span>Prospect</span>
+                      <span>{insights.talkRatio.buyer}%</span>
+                    </div>
+                    <Progress value={insights.talkRatio.buyer} className="h-2" />
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Suggestions */}
+            {insights?.suggestions?.length > 0 && (
+              <Card>
+                <CardHeader className="pb-2 pt-3">
+                  <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide flex items-center gap-2">
+                    Suggestions
+                    <Badge variant="secondary" className="text-xs">{insights.suggestions.length}</Badge>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="pb-3">
+                  <ul className="flex flex-col gap-2">
+                    {insights.suggestions.map((s, i) => (
+                      <li key={i} className="text-sm leading-snug">
+                        <InsightItem item={s} />
+                      </li>
+                    ))}
+                  </ul>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Objections */}
+            {insights?.objections?.length > 0 && (
+              <Card className="border-warning/50">
+                <CardHeader className="pb-2 pt-3">
+                  <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide flex items-center gap-2">
+                    Objections
+                    <Badge variant="warning" className="text-xs">{insights.objections.length}</Badge>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="pb-3">
+                  <ul className="flex flex-col gap-2">
+                    {insights.objections.map((o, i) => (
+                      <li key={i} className="text-sm leading-snug">
+                        <InsightItem item={o} />
+                      </li>
+                    ))}
+                  </ul>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Battle Cards */}
+            {insights?.battleCards?.length > 0 && (
+              <Card>
+                <CardHeader className="pb-2 pt-3">
+                  <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide flex items-center gap-2">
+                    Battle Cards
+                    <Badge variant="secondary" className="text-xs">{insights.battleCards.length}</Badge>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="pb-3">
+                  <ul className="flex flex-col gap-2">
+                    {insights.battleCards.map((b, i) => (
+                      <li key={i} className="text-sm leading-snug">
+                        <InsightItem item={b} />
+                      </li>
+                    ))}
+                  </ul>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Missing signals */}
+            {insights?.missingSignals?.length > 0 && (
+              <Card className="border-warning/50">
+                <CardHeader className="pb-2 pt-3">
+                  <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide flex items-center gap-2">
+                    Signaux manquants
+                    <Badge variant="warning" className="text-xs">{insights.missingSignals.length}</Badge>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="pb-3">
+                  <ul className="flex flex-col gap-2">
+                    {insights.missingSignals.map((m, i) => (
+                      <li key={i} className="text-sm leading-snug">
+                        <InsightItem item={m} />
+                      </li>
+                    ))}
+                  </ul>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Next step alerts */}
+            {insights?.nextStepAlerts?.length > 0 && (
+              <Card className="border-destructive/50">
+                <CardHeader className="pb-2 pt-3">
+                  <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide flex items-center gap-2">
+                    Next Steps
+                    <Badge variant="destructive" className="text-xs">{insights.nextStepAlerts.length}</Badge>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="pb-3">
+                  <ul className="flex flex-col gap-2">
+                    {insights.nextStepAlerts.map((n, i) => (
+                      <li key={i} className="text-sm leading-snug">
+                        <InsightItem item={n} />
+                      </li>
+                    ))}
+                  </ul>
+                </CardContent>
+              </Card>
+            )}
+
+            <Separator />
+
+            {/* Live transcript */}
+            <Card>
+              <CardHeader className="pb-2 pt-3">
+                <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  Transcription live
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pb-3 p-0">
+                <ScrollArea className="h-48 px-4 pb-3">
+                  <div className="flex flex-col gap-1">
+                    {transcripts.length === 0 && (
+                      <p className="text-xs text-muted-foreground italic">En attente de parole...</p>
+                    )}
+                    {transcripts.map((t, i) => (
+                      <p key={i} className="text-xs leading-relaxed">
+                        <span className={`font-semibold mr-1 ${t.source === 'mic' ? 'text-primary' : 'text-muted-foreground'}`}>
+                          {t.source === 'mic' ? 'Vous' : 'Prospect'}
+                        </span>
+                        {t.text}
+                        {!t.isFinal && <span className="text-muted-foreground">...</span>}
+                      </p>
+                    ))}
+                  </div>
+                </ScrollArea>
+              </CardContent>
+            </Card>
+          </>
+        )}
       </div>
-
-      {/* Coaching insights */}
-      {coachingStatus === 'running' && (
-        <>
-          {/* Talk ratio */}
-          {insights?.talkRatio && (
-            <div className="panel">
-              <h3 className="section-title">Talk ratio</h3>
-              <div className="talk-ratio-bar">
-                <div className="talk-ratio-seller" style={{ width: `${insights.talkRatio.seller}%` }}>
-                  {insights.talkRatio.seller > 10 ? `Vendeur ${insights.talkRatio.seller}%` : ''}
-                </div>
-                <div className="talk-ratio-buyer" style={{ width: `${insights.talkRatio.buyer}%` }}>
-                  {insights.talkRatio.buyer > 10 ? `Prospect ${insights.talkRatio.buyer}%` : ''}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Suggestions */}
-          {insights?.suggestions?.length > 0 && (
-            <div className="panel">
-              <h3 className="section-title">Suggestions</h3>
-              <ul className="insight-list">
-                {insights.suggestions.map((s, i) => <li key={i}><InsightItem item={s} /></li>)}
-              </ul>
-            </div>
-          )}
-
-          {/* Objections */}
-          {insights?.objections?.length > 0 && (
-            <div className="panel warning">
-              <h3 className="section-title">Objections</h3>
-              <ul className="insight-list">
-                {insights.objections.map((o, i) => <li key={i}><InsightItem item={o} /></li>)}
-              </ul>
-            </div>
-          )}
-
-          {/* Battle Cards */}
-          {insights?.battleCards?.length > 0 && (
-            <div className="panel">
-              <h3 className="section-title">Battle Cards</h3>
-              <ul className="insight-list">
-                {insights.battleCards.map((b, i) => <li key={i}><InsightItem item={b} /></li>)}
-              </ul>
-            </div>
-          )}
-
-          {/* Missing signals */}
-          {insights?.missingSignals?.length > 0 && (
-            <div className="panel warning">
-              <h3 className="section-title">Signaux manquants</h3>
-              <ul className="insight-list">
-                {insights.missingSignals.map((m, i) => <li key={i}><InsightItem item={m} /></li>)}
-              </ul>
-            </div>
-          )}
-
-          {/* Next step alerts */}
-          {insights?.nextStepAlerts?.length > 0 && (
-            <div className="panel alert">
-              <h3 className="section-title">Next Steps</h3>
-              <ul className="insight-list">
-                {insights.nextStepAlerts.map((n, i) => <li key={i}><InsightItem item={n} /></li>)}
-              </ul>
-            </div>
-          )}
-
-          {/* Live transcript */}
-          <div className="panel transcript-panel">
-            <h3 className="section-title">Transcription live</h3>
-            <div className="transcript-scroll">
-              {transcripts.map((t, i) => (
-                <p key={i} className={`transcript-line ${t.source}`}>
-                  <span className="transcript-role">{t.source === 'mic' ? 'Vous' : 'Prospect'}</span>
-                  {' '}{t.text}
-                  {!t.isFinal && <span className="interim">...</span>}
-                </p>
-              ))}
-            </div>
-          </div>
-        </>
-      )}
     </Shell>
   )
 }
 
 function Shell({ children }) {
   return (
-    <main className="sidepanel-root">
-      <header className="sp-header">
-        <h1>B2B Coach</h1>
+    <main className="min-h-screen bg-background text-foreground flex flex-col">
+      <header className="flex items-center gap-2 px-4 py-3 border-b border-border">
+        <span className="h-2 w-2 rounded-full bg-primary" />
+        <h1 className="text-sm font-semibold tracking-tight">B2B Coach</h1>
       </header>
-      <div className="sp-content">{children}</div>
+      <div className="flex-1 overflow-auto">{children}</div>
     </main>
   )
 }
@@ -466,9 +581,9 @@ function InsightItem({ item }) {
     const detailText = Array.isArray(details) ? details.join(' / ') : String(details || '')
     return (
       <>
-        {title && <strong>{title}</strong>}
+        {title && <strong className="font-medium">{title}</strong>}
         {title && detailText ? ' — ' : ''}
-        {detailText}
+        {detailText && <span className="text-muted-foreground">{detailText}</span>}
         {!title && !detailText && JSON.stringify(item)}
       </>
     )
