@@ -1,4 +1,6 @@
-@import "tailwindcss";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
 @layer base {
   :root {
@@ -29,13 +31,12 @@
   }
 
   * {
-    border-color: hsl(var(--border));
+    @apply border-border;
     box-sizing: border-box;
   }
 
   body {
-    background-color: hsl(var(--background));
-    color: hsl(var(--foreground));
+    @apply bg-background text-foreground;
     font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
     margin: 0;
   }
