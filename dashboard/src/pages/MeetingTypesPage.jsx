@@ -60,9 +60,12 @@ export function MeetingTypesPage() {
 
   const handleDeleteMeetingType = async () => {
     if (!toDelete) return
-    await deleteMeetingType(toDelete.id)
-    setToDelete(null)
-    await loadMeetingTypes()
+    try {
+      await deleteMeetingType(toDelete.id)
+    } finally {
+      setToDelete(null)
+      await loadMeetingTypes()
+    }
   }
 
   return (

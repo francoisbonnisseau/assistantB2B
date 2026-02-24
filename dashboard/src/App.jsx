@@ -20,36 +20,29 @@ function App() {
   useEffect(() => {
     let mounted = true
 
-    const bootstrap = async () => {
-      const {
-        data: { session: currentSession },
-      } = await supabase.auth.getSession()
-
-      if (!mounted) return
-      setSession(currentSession)
-
-      if (currentSession?.user) {
-        const adminStatus = await isUserAdmin(currentSession.user.id)
-        if (mounted) setIsAdmin(adminStatus)
-      }
-
-      if (mounted) setLoading(false)
-    }
-
-    bootstrap()
-
+    // onAuthStateChange fire INITIAL_SESSION immédiatement à la souscription,
+    // ce qui remplace le bootstrap() séparé et évite les doublons en StrictMode.
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_, nextSession) => {
+    } = supabase.auth.onAuthStateChange(async (event, nextSession) => {
+      if (!mounted) return
+
       setSession(nextSession)
 
       if (!nextSession?.user) {
         setIsAdmin(false)
+        if (event === 'INITIAL_SESSION') setLoading(false)
         return
       }
 
-      const adminStatus = await isUserAdmin(nextSession.user.id)
-      setIsAdmin(adminStatus)
+      try {
+        const adminStatus = await isUserAdmin(nextSession.user.id)
+        if (mounted) setIsAdmin(adminStatus)
+      } catch {
+        // en cas d'erreur réseau, on conserve isAdmin à false
+      } finally {
+        if (mounted && event === 'INITIAL_SESSION') setLoading(false)
+      }
     })
 
     return () => {
