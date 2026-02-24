@@ -20,8 +20,8 @@ function App() {
   useEffect(() => {
     let mounted = true
 
-    // onAuthStateChange fire INITIAL_SESSION immédiatement à la souscription,
-    // ce qui remplace le bootstrap() séparé et évite les doublons en StrictMode.
+    // Avec persistSession:false, getSession() retourne null immédiatement (pas de réseau).
+    // onAuthStateChange/INITIAL_SESSION suffit pour initialiser l'état.
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, nextSession) => {
@@ -39,9 +39,9 @@ function App() {
         const adminStatus = await isUserAdmin(nextSession.user.id)
         if (mounted) setIsAdmin(adminStatus)
       } catch {
-        // en cas d'erreur réseau, on conserve isAdmin à false
+        // ignore
       } finally {
-        if (mounted && event === 'INITIAL_SESSION') setLoading(false)
+        if (event === 'INITIAL_SESSION' && mounted) setLoading(false)
       }
     })
 
